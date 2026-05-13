@@ -70,8 +70,33 @@ class HetznerClient:
         response = self._request("GET", "/server_types")
         return response.get("server_types", [])
 
+    def get_cheapest_server_type(self) -> str:
+        """Get the cheapest available server type."""
+        try:
+            types_response = self._request("GET", "/server_types")
+            server_types = types_response.get("server_types", [])
+
+            if not server_types:
+                print("⚠️  No server types available, using default")
+                return "cpx11"
+
+            # Filter out deprecated types and get cheapest
+            available = [st for st in server_types if not st.get("deprecated", False)]
+            if not available:
+                available = server_types
+
+            # Sort by price
+            available.sort(key=lambda x: x.get("prices", [{}])[0].get("price_hourly", {}).get("net", 999))
+
+            cheapest = available[0]["name"]
+            print(f"✅ Using server type: {cheapest}")
+            return cheapest
+        except Exception as e:
+            print(f"⚠️  Could not get server types: {e}, using default cpx11")
+            return "cpx11"
+
     def create_server(
-        self, name: str, server_type: str = "ccx11", image: str = "ubuntu-22.04"
+        self, name: str, server_type: str = "", image: str = "ubuntu-22.04"
     ) -> Dict[str, Any]:
         """Create a new server."""
         # Validate server name (max 63 chars, alphanumeric + dash)
@@ -79,6 +104,10 @@ class HetznerClient:
             name = name[:63]
 
         name = name.replace("_", "-").lower()  # Hetzner requires lowercase, no underscores
+
+        # If no server type specified, get the cheapest available
+        if not server_type:
+            server_type = self.get_cheapest_server_type()
 
         payload = {
             "name": name,
@@ -236,7 +265,7 @@ class DeploymentManager:
         # Create server
         try:
             server = self.hetzner.create_server(
-                name=server_name, server_type="ccx11", image="ubuntu-22.04"
+                name=server_name, image="ubuntu-22.04"
             )
             server_id = server["id"]
             print(f"✅ Server created (ID: {server_id})")
