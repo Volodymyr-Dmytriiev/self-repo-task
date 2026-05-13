@@ -56,6 +56,8 @@ class HetznerClient:
             return response.json()
         except requests.RequestException as e:
             print(f"❌ API Error: {e}")
+            if hasattr(e.response, 'text'):
+                print(f"Response: {e.response.text}")
             raise
 
     def get_images(self) -> list:
@@ -72,6 +74,12 @@ class HetznerClient:
         self, name: str, server_type: str = "cx11", image: str = "ubuntu-22.04"
     ) -> Dict[str, Any]:
         """Create a new server."""
+        # Validate server name (max 63 chars, alphanumeric + dash)
+        if len(name) > 63:
+            name = name[:63]
+
+        name = name.replace("_", "-").lower()  # Hetzner requires lowercase, no underscores
+
         payload = {
             "name": name,
             "server_type": server_type,
@@ -81,6 +89,10 @@ class HetznerClient:
                 "created_by": "self-improvement",
             },
         }
+
+        print(f"📤 Sending request with server name: {name}")
+        print(f"📤 Payload: {json.dumps(payload, indent=2)}")
+
         response = self._request("POST", "/servers", payload)
         return response.get("server", {})
 
@@ -151,7 +163,6 @@ class GitHubRunner:
         github_org: str, github_token: str, runner_name: str = "hetzner-runner"
     ) -> str:
         """Generate script to install GitHub runner."""
-        # This script will be executed on the Hetzner server
         script = f"""#!/bin/bash
 set -e
 
@@ -192,14 +203,7 @@ echo "Configuring runner..."
 echo "✅ GitHub Runner installed and started"
 chown -R github-runner:github-runner /home/github-runner
 
-# Install Cloudflare Tunnel
-echo "📡 Installing Cloudflare Tunnel..."
-curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | apt-key add -
-echo 'deb http://pkg.cloudflare.com/cloudflare-main $(lsb_release -sc) main' | tee /etc/apt/sources.list.d/cloudflare-main.list
-apt-get update
-apt-get install -y cloudflared
-
-echo "✅ Cloudflare Tunnel installed"
+echo "✅ Done!"
 """
         return script.strip()
 
@@ -212,9 +216,12 @@ class DeploymentManager:
         self.github_token = github_token
         self.github_org = github_org
 
-    def create_runner_server(self, server_name: str = "github-runner-test") -> Dict:
+    def create_runner_server(self, server_name: str = "gh-runner") -> Dict:
         """Create and configure server for GitHub runner."""
         print(f"🚀 Creating Hetzner server: {server_name}")
+
+        # Shorten and sanitize server name
+        server_name = server_name[:30].replace("_", "-").lower()
 
         # Check if server already exists
         existing = self.hetzner.get_server_by_name(server_name)
@@ -284,7 +291,7 @@ def main():
     )
     parser.add_argument(
         "--server-name",
-        default="github-runner-test",
+        default="gh-runner",
         help="Name for the Hetzner server",
     )
     parser.add_argument(
