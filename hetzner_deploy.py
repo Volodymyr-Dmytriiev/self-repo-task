@@ -71,7 +71,7 @@ class HetznerClient:
         return response.get("server_types", [])
 
     def create_server(
-        self, name: str, server_type: str = "cx11", image: str = "ubuntu-22.04"
+        self, name: str, server_type: str = "ccx11", image: str = "ubuntu-22.04"
     ) -> Dict[str, Any]:
         """Create a new server."""
         # Validate server name (max 63 chars, alphanumeric + dash)
@@ -236,7 +236,7 @@ class DeploymentManager:
         # Create server
         try:
             server = self.hetzner.create_server(
-                name=server_name, server_type="cx11", image="ubuntu-22.04"
+                name=server_name, server_type="ccx11", image="ubuntu-22.04"
             )
             server_id = server["id"]
             print(f"✅ Server created (ID: {server_id})")
