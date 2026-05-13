@@ -2,8 +2,7 @@
 """
 Self-Improving Repository Agent
 
-This script analyzes a repository and uses Claude API to suggest improvements,
-then creates a pull request with the improvements.
+Analyzes a repository using Claude API and automatically commits improvements.
 
 Usage:
     python self-improve.py --api-key YOUR_KEY --github-token TOKEN --repo-path .
@@ -14,9 +13,11 @@ import sys
 import json
 import subprocess
 import argparse
+import base64
 from pathlib import Path
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict, Any
+
 import anthropic
 import requests
 
@@ -45,11 +46,10 @@ class RepositoryAnalyzer:
         """Get all Python files in the repository."""
         python_files = []
         for file in self.repo_path.rglob("*.py"):
-            # Skip excluded directories
             if any(excluded in file.parts for excluded in self.excluded_dirs):
                 continue
             python_files.append(str(file.relative_to(self.repo_path)))
-        return sorted(python_files)[:10]  # Limit to 10 files for analysis
+        return sorted(python_files)[:10]
 
     def get_file_content(self, file_path: str) -> str:
         """Get content of a file."""
@@ -59,7 +59,7 @@ class RepositoryAnalyzer:
                 return f.read()
         return ""
 
-    def analyze_repository(self) -> dict:
+    def analyze_repository(self) -> Dict[str, Any]:
         """Generate a comprehensive analysis of the repository."""
         analysis = {
             "timestamp": datetime.now().isoformat(),
@@ -70,11 +70,10 @@ class RepositoryAnalyzer:
         }
         return analysis
 
-    def _analyze_structure(self) -> dict:
+    def _analyze_structure(self) -> Dict[str, Any]:
         """Analyze repository structure."""
         structure = {
             "total_files": len(list(self.repo_path.rglob("*"))),
-            "total_dirs": len(list(self.repo_path.rglob("*"))),
             "has_readme": (self.repo_path / "README.md").exists(),
             "has_pyproject_toml": (self.repo_path / "pyproject.toml").exists(),
             "has_requirements_txt": (self.repo_path / "requirements.txt").exists(),
@@ -83,27 +82,20 @@ class RepositoryAnalyzer:
         }
         return structure
 
-    def _get_file_samples(self) -> dict:
+    def _get_file_samples(self) -> Dict[str, str]:
         """Get samples of key files."""
         samples = {}
 
-        # README
         readme_path = self.repo_path / "README.md"
         if readme_path.exists():
             content = readme_path.read_text(encoding="utf-8")
-            samples["README.md"] = content[:500] + (
-                "..." if len(content) > 500 else ""
-            )
+            samples["README.md"] = content[:500]
 
-        # First Python file
         python_files = self.get_python_files()
         if python_files:
             content = self.get_file_content(python_files[0])
-            samples["sample_python"] = content[:300] + (
-                "..." if len(content) > 300 else ""
-            )
+            samples["sample_python"] = content[:300]
 
-        # pyproject.toml
         pyproject_path = self.repo_path / "pyproject.toml"
         if pyproject_path.exists():
             samples["pyproject.toml"] = pyproject_path.read_text(encoding="utf-8")
@@ -117,7 +109,7 @@ class ClaudeImprover:
     def __init__(self, api_key: str):
         self.client = anthropic.Anthropic(api_key=api_key)
 
-    def suggest_improvements(self, analysis: dict) -> str:
+    def suggest_improvements(self, analysis: Dict[str, Any]) -> str:
         """Get improvement suggestions from Claude."""
         prompt = f"""
 Analyze this GitHub repository structure and provide specific, actionable improvements.
@@ -155,7 +147,7 @@ Be specific - each improvement should have:
 
 
 class GitHubIntegration:
-    """Handles GitHub API interactions."""
+    """Handles GitHub API interactions for committing improvements."""
 
     def __init__(self, token: str, repo_owner: str, repo_name: str):
         self.token = token
@@ -167,98 +159,34 @@ class GitHubIntegration:
             "Accept": "application/vnd.github.v3+json",
         }
 
-    def get_repo_info(self) -> dict:
+    def get_repo_info(self) -> Dict[str, Any]:
         """Get repository information."""
         url = f"{self.base_url}/repos/{self.repo_owner}/{self.repo_name}"
         response = requests.get(url, headers=self.headers)
         return response.json()
 
-    def create_branch(self, branch_name: str) -> bool:
-        """Create a new branch for improvements."""
-        try:
-            # Get the default branch's latest commit
-            repo_info = self.get_repo_info()
-            default_branch = repo_info["default_branch"]
-
-            # Get the SHA of the latest commit
-            url = f"{self.base_url}/repos/{self.repo_owner}/{self.repo_name}/commits/{default_branch}"
-            response = requests.get(url, headers=self.headers)
-            sha = response.json()["sha"]
-
-            # Create new branch
-            url = f"{self.base_url}/repos/{self.repo_owner}/{self.repo_name}/git/refs"
-            data = {
-                "ref": f"refs/heads/{branch_name}",
-                "sha": sha,
-            }
-            response = requests.post(url, json=data, headers=self.headers)
-            return response.status_code == 201
-        except Exception as e:
-            print(f"Error creating branch: {e}")
-            return False
-
-    def create_file_in_branch(
-        self, branch_name: str, file_path: str, content: str
-    ) -> bool:
-        """Create a file in a specific branch via GitHub API."""
-        try:
-            url = f"{self.base_url}/repos/{self.repo_owner}/{self.repo_name}/contents/{file_path}"
-
-            # Get the current commit SHA for the branch
-            repo_info = self.get_repo_info()
-            default_branch = repo_info["default_branch"]
-
-            commits_url = f"{self.base_url}/repos/{self.repo_owner}/{self.repo_name}/commits/{branch_name}"
-            commits_response = requests.get(commits_url, headers=self.headers)
-
-            if commits_response.status_code != 200:
-                # Branch might not have commits yet, use default branch
-                commits_url = f"{self.base_url}/repos/{self.repo_owner}/{self.repo_name}/commits/{default_branch}"
-                commits_response = requests.get(commits_url, headers=self.headers)
-
-            parent_sha = commits_response.json()["commit"]["tree"]["sha"]
-
-            # Create file
-            data = {
-                "message": f"🤖 Add improvement suggestions from Claude",
-                "content": content,
-                "branch": branch_name,
-            }
-
-            response = requests.put(url, json=data, headers=self.headers)
-            return response.status_code in [201, 200]
-        except Exception as e:
-            print(f"Warning: Could not create file in branch: {e}")
-            return False
-
-    def commit_improvements_to_main(
-        self, suggestions: str, analysis: dict
+    def commit_improvements_directly(
+        self, suggestions: str, analysis: Dict[str, Any]
     ) -> bool:
         """Commit improvements directly to main branch."""
         try:
-            import base64
-
-            # Create IMPROVEMENTS.md with suggestions
+            # Get default branch info
             repo_info = self.get_repo_info()
             default_branch = repo_info["default_branch"]
-
-            # Get current main branch SHA
-            commits_url = f"{self.base_url}/repos/{self.repo_owner}/{self.repo_name}/commits/{default_branch}"
-            commits_response = requests.get(commits_url, headers=self.headers)
-            parent_sha = commits_response.json()["commit"]["tree"]["sha"]
 
             # Create file content
             file_content = f"""# 🤖 Automated Improvements from Claude Analysis
 
 **Generated**: {analysis['timestamp']}
 **Repository**: {self.repo_owner}/{self.repo_name}
+**Python Files Analyzed**: {len(analysis['python_files'])}
 
-## Suggestions
+## Suggested Improvements
 
 {suggestions}
 
 ---
-*Auto-generated by Self-Improvement Agent*
+*Auto-generated by Self-Improvement Agent - Runs every 2 hours*
 """
 
             # Encode for GitHub API
@@ -268,18 +196,17 @@ class GitHubIntegration:
             url = f"{self.base_url}/repos/{self.repo_owner}/{self.repo_name}/contents/IMPROVEMENTS.md"
 
             # Check if file exists
+            sha = None
             try:
                 existing = requests.get(url, headers=self.headers)
                 if existing.status_code == 200:
                     sha = existing.json()["sha"]
-                else:
-                    sha = None
-            except:
-                sha = None
+            except Exception:
+                pass
 
             # Commit the improvements
             data = {
-                "message": f"🤖 Auto-improvements from Claude analysis at {analysis['timestamp']}",
+                "message": f"🤖 Auto-improvements from Claude analysis",
                 "content": encoded_content,
                 "branch": default_branch,
             }
@@ -291,55 +218,30 @@ class GitHubIntegration:
 
             if response.status_code in [200, 201]:
                 print(f"✅ Improvements committed to {default_branch}")
+                print(f"📝 File: IMPROVEMENTS.md")
                 return True
             else:
-                print(f"Error committing improvements: {response.text}")
+                print(f"❌ Error committing improvements: {response.text}")
                 return False
 
         except Exception as e:
-            print(f"Error committing to main: {e}")
+            print(f"❌ Error: {e}")
             return False
-
-
-def get_git_config():
-    """Get git user configuration."""
-    try:
-        name = subprocess.check_output(
-            ["git", "config", "user.name"], text=True
-        ).strip()
-        email = subprocess.check_output(
-            ["git", "config", "user.email"], text=True
-        ).strip()
-        return name, email
-    except subprocess.CalledProcessError:
-        return "Self-Improvement Agent", "agent@self-improvement.local"
 
 
 def main():
     parser = argparse.ArgumentParser(
         description="Self-Improving Repository Agent"
     )
-    parser.add_argument(
-        "--api-key", required=True, help="Claude API key"
-    )
-    parser.add_argument(
-        "--github-token", required=True, help="GitHub Personal Access Token"
-    )
-    parser.add_argument(
-        "--repo-path", default=".", help="Path to repository"
-    )
-    parser.add_argument(
-        "--repo-owner",
-        help="GitHub repository owner (auto-detected from git if not provided)",
-    )
-    parser.add_argument(
-        "--repo-name",
-        help="GitHub repository name (auto-detected from git if not provided)",
-    )
+    parser.add_argument("--api-key", required=True, help="Claude API key")
+    parser.add_argument("--github-token", required=True, help="GitHub Personal Access Token")
+    parser.add_argument("--repo-path", default=".", help="Path to repository")
+    parser.add_argument("--repo-owner", help="GitHub repository owner")
+    parser.add_argument("--repo-name", help="GitHub repository name")
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Don't actually create a PR, just show suggestions",
+        help="Don't commit, just show suggestions",
     )
 
     args = parser.parse_args()
@@ -352,13 +254,12 @@ def main():
                 text=True,
             ).strip()
 
-            # Parse https://github.com/owner/repo.git or git@github.com:owner/repo.git
             if "github.com" in remote_url:
                 parts = remote_url.split("github.com")[-1].strip("/:").split("/")
                 args.repo_owner = parts[0]
                 args.repo_name = parts[1].replace(".git", "")
         except subprocess.CalledProcessError:
-            print("Error: Could not auto-detect repo owner/name. Please provide --repo-owner and --repo-name")
+            print("Error: Could not auto-detect repo. Please provide --repo-owner and --repo-name")
             sys.exit(1)
 
     print(f"🔍 Analyzing repository: {args.repo_owner}/{args.repo_name}")
@@ -384,7 +285,7 @@ def main():
     print("=" * 60)
 
     if args.dry_run:
-        print("\n✅ Dry run completed. No PR created.")
+        print("\n✅ Dry run completed. No changes committed.")
         return
 
     # Commit improvements directly to main
@@ -392,9 +293,9 @@ def main():
 
     github = GitHubIntegration(args.github_token, args.repo_owner, args.repo_name)
 
-    if github.commit_improvements_to_main(suggestions, analysis):
+    if github.commit_improvements_directly(suggestions, analysis):
         print("\n✅ Improvements automatically applied to main branch!")
-        print("📊 Repository improved successfully")
+        print("🎉 Repository improved successfully")
     else:
         print("❌ Failed to commit improvements")
         sys.exit(1)
