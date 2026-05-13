@@ -198,32 +198,62 @@ class GitHubIntegration:
             return False
 
     def create_pull_request(
-        self, branch_name: str, title: str, body: str
-    ) -> Optional[str]:
-        """Create a pull request with improvements."""
+    self, branch_name: str, title: str, body: str
+) -> Optional[str]:
+    """Create a pull request with improvements."""
+    try:
+        # 1. Сначала добавь коммит в branch
         try:
-            url = f"{self.base_url}/repos/{self.repo_owner}/{self.repo_name}/pulls"
-            repo_info = self.get_repo_info()
-            default_branch = repo_info["default_branch"]
-
-            data = {
-                "title": title,
-                "head": branch_name,
-                "base": default_branch,
-                "body": body,
-            }
-
-            response = requests.post(url, json=data, headers=self.headers)
-
-            if response.status_code == 201:
-                pr_data = response.json()
-                return pr_data["html_url"]
-            else:
-                print(f"Error creating PR: {response.text}")
-                return None
+            subprocess.run(
+                ["git", "config", "user.name", "Self-Improvement Agent"],
+                check=True,
+                cwd=os.getcwd()
+            )
+            subprocess.run(
+                ["git", "config", "user.email", "agent@self-improvement.local"],
+                check=True,
+                cwd=os.getcwd()
+            )
+            
+            # Коммит с suggestions
+            commit_message = f"🤖 Improvement suggestions from Claude\n\n{body[:200]}..."
+            subprocess.run(
+                ["git", "add", "README.md"],
+                check=False,
+                cwd=os.getcwd()
+            )
+            subprocess.run(
+                ["git", "commit", "-m", commit_message],
+                check=False,
+                cwd=os.getcwd()
+            )
         except Exception as e:
-            print(f"Error creating pull request: {e}")
+            print(f"⚠️ Could not add commit: {e}")
+            # Continue anyway - PR will still be created
+        
+        # 2. Теперь создай PR
+        url = f"{self.base_url}/repos/{self.repo_owner}/{self.repo_name}/pulls"
+        repo_info = self.get_repo_info()
+        default_branch = repo_info["default_branch"]
+
+        data = {
+            "title": title,
+            "head": branch_name,
+            "base": default_branch,
+            "body": body,
+        }
+
+        response = requests.post(url, json=data, headers=self.headers)
+
+        if response.status_code == 201:
+            pr_data = response.json()
+            return pr_data["html_url"]
+        else:
+            print(f"Error creating PR: {response.text}")
             return None
+    except Exception as e:
+        print(f"Error creating pull request: {e}")
+        return None
 
 
 def get_git_config():
