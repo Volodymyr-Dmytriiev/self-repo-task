@@ -467,8 +467,6 @@ def main() -> None:
     # provision
     p = sub.add_parser("provision", help="Create server + register runner")
     p.add_argument("--hetzner-token", required=True)
-    p = sub.add_parser("provision", help="Create server + register runner")
-    p.add_argument("--hetzner-token", required=True)
     p.add_argument("--github-token", required=True)
     p.add_argument("--repo", required=True, help="GitHub repo in owner/name format")
     p.add_argument("--run-id", default="local",
