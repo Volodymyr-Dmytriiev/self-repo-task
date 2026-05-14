@@ -109,23 +109,39 @@ class HetznerClient:
     # -- Server -----------------------------------------------------------------
 
     def create_server(self, name: str, image: str, server_type: str,
-                      user_data: str, firewall_id: int) -> dict:
+                      user_data: str, firewall_id: int,
+                      location: str = "") -> dict:
         name = name[:63].replace("_", "-").lower()
-        payload = {
-            "name": name,
-            "image": image,
-            "server_type": server_type,
-            "firewalls": [{"firewall": firewall_id}],
-            "user_data": user_data,
-            "labels": {
-                "purpose": "github-runner",
-                "managed-by": "hetzner-deploy",
-            },
-        }
-        resp = self._request("POST", "/servers", payload)
-        server = resp["server"]
-        print(f"Server '{name}' created (ID: {server['id']})")
-        return server
+
+        # Try each location in order until one succeeds.
+        # "error during placement" (412) means no capacity in that DC.
+        locations_to_try = [location] if location else ["nbg1", "fsn1", "hel1", "ash", "hil"]
+
+        last_exc = None
+        for loc in locations_to_try:
+            payload = {
+                "name": name,
+                "image": image,
+                "server_type": server_type,
+                "location": loc,
+                "firewalls": [{"firewall": firewall_id}],
+                "user_data": user_data,
+                "labels": {
+                    "purpose": "github-runner",
+                    "managed-by": "hetzner-deploy",
+                },
+            }
+            try:
+                resp = self._request("POST", "/servers", payload)
+                server = resp["server"]
+                actual_loc = server.get("datacenter", {}).get("location", {}).get("name", loc)
+                print(f"Server '{name}' created (ID: {server['id']}, location: {actual_loc})")
+                return server
+            except Exception as exc:
+                print(f"  Placement failed in {loc}: {exc} — trying next location...")
+                last_exc = exc
+
+        raise RuntimeError(f"Could not place server in any location: {last_exc}")
 
     def wait_for_server_running(self, server_id: int, timeout: int = 300) -> bool:
         deadline = time.time() + timeout
@@ -351,6 +367,7 @@ def cmd_provision(args) -> None:
         server_type=server_type,
         user_data=user_data,
         firewall_id=firewall_id,
+        location=getattr(args, "location", ""),
     )
     server_id = server["id"]
 
@@ -450,12 +467,16 @@ def main() -> None:
     # provision
     p = sub.add_parser("provision", help="Create server + register runner")
     p.add_argument("--hetzner-token", required=True)
+    p = sub.add_parser("provision", help="Create server + register runner")
+    p.add_argument("--hetzner-token", required=True)
     p.add_argument("--github-token", required=True)
     p.add_argument("--repo", required=True, help="GitHub repo in owner/name format")
     p.add_argument("--run-id", default="local",
                    help="GitHub run ID (used for unique naming)")
     p.add_argument("--server-type", default="",
                    help="Hetzner server type (default: cheapest available)")
+    p.add_argument("--location", default="",
+                   help="Hetzner datacenter location (default: tries nbg1->fsn1->hel1->ash->hil)")
 
     # cleanup
     c = sub.add_parser("cleanup", help="Delete server, firewall, deregister runner")
