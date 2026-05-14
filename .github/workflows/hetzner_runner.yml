@@ -32,6 +32,12 @@ on:
 #   • Deletes Hetzner server  →  zero idle cost
 #   • Deletes Hetzner firewall
 
+# Global permissions — GITHUB_TOKEN needs administration:write to call
+# POST /repos/{owner}/{repo}/actions/runners/registration-token
+permissions:
+  contents: read
+  administration: write
+
 jobs:
 
   # ────────────────────────────────────────────────────────────────────────────
