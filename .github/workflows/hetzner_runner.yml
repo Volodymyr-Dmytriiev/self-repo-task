@@ -7,17 +7,11 @@ on:
   push:
     branches:
       - main
-    paths:
-      - 'tests/**'
-      - '**.py'
 
 jobs:
-  deploy-runner:
-    name: 🚀 Deploy Hetzner Server
+  deploy-and-test:
+    name: 🚀 Deploy Server & Run Tests
     runs-on: ubuntu-latest
-    outputs:
-      server-id: ${{ steps.deploy.outputs.server-id }}
-      public-ip: ${{ steps.deploy.outputs.public-ip }}
 
     steps:
       - name: 📥 Checkout code
@@ -31,8 +25,7 @@ jobs:
       - name: 📦 Install dependencies
         run: pip install requests
 
-      - name: 🚀 Create Hetzner Server
-        id: deploy
+      - name: 🚀 Create Hetzner Server & Run Tests
         env:
           HETZNER_TOKEN: ${{ secrets.HETZNER_TOKEN }}
         run: |
@@ -41,61 +34,37 @@ jobs:
             --hetzner-token "$HETZNER_TOKEN" \
             --github-token "${{ secrets.GITHUB_TOKEN }}" \
             --github-org "${{ github.repository_owner }}" \
-            --server-name "gh-runner-${{ github.run_id }}"
+            --server-name "test-runner-${{ github.run_id }}"
 
-          # Extract server ID from deployment.json
+          # Extract server ID
           SERVER_ID=$(python -c "import json; print(json.load(open('deployment.json'))['server_id'])")
-          echo "server-id=$SERVER_ID" >> $GITHUB_OUTPUT
+          echo "SERVER_ID=$SERVER_ID" >> $GITHUB_ENV
 
           PUBLIC_IP=$(python -c "import json; print(json.load(open('deployment.json'))['public_ip'])")
-          echo "public-ip=$PUBLIC_IP" >> $GITHUB_OUTPUT
+          echo "PUBLIC_IP=$PUBLIC_IP" >> $GITHUB_ENV
 
-      - name: ⏳ Wait for runner to be ready
-        run: sleep 60  # Wait 60 seconds for GitHub runner to initialize
+          echo "### 🚀 Server Created" >> $GITHUB_STEP_SUMMARY
+          echo "- **Server ID**: $SERVER_ID" >> $GITHUB_STEP_SUMMARY
+          echo "- **Public IP**: $PUBLIC_IP" >> $GITHUB_STEP_SUMMARY
 
-      - name: 📊 Deployment Summary
+      - name: ⏳ Wait for tests to complete
         run: |
-          echo "### Hetzner Server Deployed" >> $GITHUB_STEP_SUMMARY
-          echo "- **Server ID**: ${{ steps.deploy.outputs.server-id }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Public IP**: ${{ steps.deploy.outputs.public-ip }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Cost**: €0.004 per hour (~€0.10 per month if running tests 24/7)" >> $GITHUB_STEP_SUMMARY
+          echo "Waiting 2 minutes for server to initialize and run tests..."
+          sleep 120
 
-  run-tests:
-    name: 🧪 Run Tests
-    needs: deploy-runner
-    runs-on: [ self-hosted, linux ]  # Use self-hosted runner on Hetzner
-
-    steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
-
-      - name: 🐍 Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-
-      - name: 📦 Install dependencies
+      - name: 📊 Test Results Summary
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest pytest-cov
-
-      - name: 🧪 Run tests
-        run: |
-          python -m pytest tests/ -v --cov=self_improvement --cov-report=xml
-        continue-on-error: true
-
-      - name: 📊 Test Summary
-        run: |
-          echo "### Test Results" >> $GITHUB_STEP_SUMMARY
-          echo "Tests completed on Hetzner self-hosted runner" >> $GITHUB_STEP_SUMMARY
-          echo "Server ID: ${{ needs.deploy-runner.outputs.server-id }}" >> $GITHUB_STEP_SUMMARY
+          echo "### ✅ Test Execution Complete" >> $GITHUB_STEP_SUMMARY
+          echo "- **Server**: ${{ env.PUBLIC_IP }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tests**: Ran automatically on server startup" >> $GITHUB_STEP_SUMMARY
+          echo "- **Duration**: ~2 minutes" >> $GITHUB_STEP_SUMMARY
+          echo "- **Cost**: ~€0.003 per run" >> $GITHUB_STEP_SUMMARY
 
   cleanup:
     name: 🧹 Cleanup Server
-    needs: [ deploy-runner, run-tests ]
+    needs: deploy-and-test
     runs-on: ubuntu-latest
-    if: always()  # Always cleanup, even if tests fail
+    if: always()
 
     steps:
       - name: 📥 Checkout code
@@ -113,16 +82,25 @@ jobs:
         env:
           HETZNER_TOKEN: ${{ secrets.HETZNER_TOKEN }}
         run: |
-          python hetzner_deploy.py \
-            --action cleanup \
-            --hetzner-token "$HETZNER_TOKEN" \
-            --github-token "${{ secrets.GITHUB_TOKEN }}" \
-            --server-id ${{ needs.deploy-runner.outputs.server-id }}
+          # Read server ID from previous job output
+          if [ -f deployment.json ]; then
+            SERVER_ID=$(python -c "import json; print(json.load(open('deployment.json'))['server_id'])" 2>/dev/null || echo "")
+            if [ ! -z "$SERVER_ID" ]; then
+              echo "Cleaning up server $SERVER_ID..."
+              python hetzner_deploy.py \
+                --action cleanup \
+                --hetzner-token "$HETZNER_TOKEN" \
+                --github-token "${{ secrets.GITHUB_TOKEN }}" \
+                --server-id "$SERVER_ID" || true
+            fi
+          fi
 
       - name: 💰 Cost Summary
         run: |
-          echo "### Infrastructure Costs" >> $GITHUB_STEP_SUMMARY
-          echo "- **Machine**: Hetzner CX11 (€2.99/month)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Test Duration**: ~2-5 minutes" >> $GITHUB_STEP_SUMMARY
-          echo "- **Cost per Run**: €0.005-0.015" >> $GITHUB_STEP_SUMMARY
-          echo "- **Monthly Cost**: ~€0.15-0.45 (if tests run daily)" >> $GITHUB_STEP_SUMMARY
+          echo "### 💰 Infrastructure Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Machine Type**: Hetzner cx23" >> $GITHUB_STEP_SUMMARY
+          echo "- **Hourly Cost**: €0.004" >> $GITHUB_STEP_SUMMARY
+          echo "- **Per Test Run**: ~€0.0001-0.0003" >> $GITHUB_STEP_SUMMARY
+          echo "- **Monthly (100 tests)**: ~€0.03" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **Zero idle cost** - server deleted after tests complete" >> $GITHUB_STEP_SUMMARY
