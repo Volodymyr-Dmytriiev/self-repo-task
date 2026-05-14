@@ -1,106 +1,210 @@
-name: 🧪 Tests on Hetzner Runner (Auto-Scaling)
+name: 🧪 Tests on Hetzner Self-Hosted Runner
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Triggers
+# ──────────────────────────────────────────────────────────────────────────────
 on:
-  # Manual trigger for testing
   workflow_dispatch:
-  # Also on push to main
   push:
-    branches:
-      - main
+    branches: [main]
+    paths:
+      - '**.py'
+      - 'tests/**'
+      - '.github/workflows/hetzner_runner.yml'
+
+# ──────────────────────────────────────────────────────────────────────────────
+# How this works
+# ──────────────────────────────────────────────────────────────────────────────
+# Job 1 — provision  (ubuntu-latest)
+#   • Fetches runner registration token from GitHub API
+#   • Creates Hetzner Firewall with no inbound rules  → SSH blocked
+#   • Creates cheapest Hetzner VPS with cloud-init that installs the runner
+#   • Polls GitHub API until runner comes online
+#   • Writes server_id / firewall_id / runner_label to job outputs + artifact
+#
+# Job 2 — test  (self-hosted runner on the Hetzner VPS)
+#   • Targeted by unique runner label  →  runs on our Hetzner box
+#   • Checks out code, installs deps, runs pytest
+#
+# Job 3 — cleanup  (ubuntu-latest, always runs)
+#   • Downloads artifact to get IDs
+#   • Deregisters runner from GitHub
+#   • Deletes Hetzner server  →  zero idle cost
+#   • Deletes Hetzner firewall
 
 jobs:
-  deploy-and-test:
-    name: 🚀 Deploy Server & Run Tests
+
+  # ────────────────────────────────────────────────────────────────────────────
+  provision:
+  # ────────────────────────────────────────────────────────────────────────────
+    name: 🚀 Provision Hetzner Runner
     runs-on: ubuntu-latest
 
+    outputs:
+      server_id:    ${{ steps.provision.outputs.server_id }}
+      firewall_id:  ${{ steps.provision.outputs.firewall_id }}
+      runner_name:  ${{ steps.provision.outputs.runner_name }}
+      runner_label: ${{ steps.provision.outputs.runner_label }}
+      public_ip:    ${{ steps.provision.outputs.public_ip }}
+
     steps:
-      - name: 📥 Checkout code
+      - name: 📥 Checkout
         uses: actions/checkout@v4
 
       - name: 🐍 Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
+          cache: pip
 
       - name: 📦 Install dependencies
         run: pip install requests
 
-      - name: 🚀 Create Hetzner Server & Run Tests
+      - name: 🚀 Provision server & wait for runner
+        id: provision
         env:
           HETZNER_TOKEN: ${{ secrets.HETZNER_TOKEN }}
+          GITHUB_TOKEN:  ${{ secrets.GITHUB_TOKEN }}
         run: |
-          python hetzner_deploy.py \
-            --action create \
+          python hetzner_deploy.py provision \
             --hetzner-token "$HETZNER_TOKEN" \
-            --github-token "${{ secrets.GITHUB_TOKEN }}" \
-            --github-org "${{ github.repository_owner }}" \
-            --server-name "test-runner-${{ github.run_id }}"
+            --github-token  "$GITHUB_TOKEN" \
+            --repo          "${{ github.repository }}" \
+            --run-id        "${{ github.run_id }}"
 
-          # Extract server ID
-          SERVER_ID=$(python -c "import json; print(json.load(open('deployment.json'))['server_id'])")
-          echo "SERVER_ID=$SERVER_ID" >> $GITHUB_ENV
+      - name: 📤 Upload deployment artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-info
+          path: deployment.json
+          retention-days: 1
 
-          PUBLIC_IP=$(python -c "import json; print(json.load(open('deployment.json'))['public_ip'])")
-          echo "PUBLIC_IP=$PUBLIC_IP" >> $GITHUB_ENV
-
-          echo "### 🚀 Server Created" >> $GITHUB_STEP_SUMMARY
-          echo "- **Server ID**: $SERVER_ID" >> $GITHUB_STEP_SUMMARY
-          echo "- **Public IP**: $PUBLIC_IP" >> $GITHUB_STEP_SUMMARY
-
-      - name: ⏳ Wait for tests to complete
+      - name: 📊 Step summary
+        if: always()
         run: |
-          echo "Waiting 2 minutes for server to initialize and run tests..."
-          sleep 120
+          if [ -f deployment.json ]; then
+            echo "### 🚀 Hetzner Runner Provisioned" >> $GITHUB_STEP_SUMMARY
+            echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+            echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+            python -c "
+          import json
+          d = json.load(open('deployment.json'))
+          for k, v in d.items():
+              print(f'| {k} | {v} |')
+          " >> $GITHUB_STEP_SUMMARY
+          fi
 
-      - name: 📊 Test Results Summary
+  # ────────────────────────────────────────────────────────────────────────────
+  test:
+  # ────────────────────────────────────────────────────────────────────────────
+    name: 🧪 Run Tests
+    needs: provision
+    # Target the unique runner label written by the provision job.
+    # This ensures tests run on OUR Hetzner VPS, not a GitHub-hosted runner.
+    runs-on: ["self-hosted", "${{ needs.provision.outputs.runner_label }}"]
+
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 📦 Install dependencies
         run: |
-          echo "### ✅ Test Execution Complete" >> $GITHUB_STEP_SUMMARY
-          echo "- **Server**: ${{ env.PUBLIC_IP }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Tests**: Ran automatically on server startup" >> $GITHUB_STEP_SUMMARY
-          echo "- **Duration**: ~2 minutes" >> $GITHUB_STEP_SUMMARY
-          echo "- **Cost**: ~€0.003 per run" >> $GITHUB_STEP_SUMMARY
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov
 
+      - name: 🧪 Run tests
+        run: |
+          python -m pytest tests/ -v --tb=short \
+            --cov=. --cov-report=term-missing \
+            --cov-report=xml:coverage.xml \
+            --junitxml=test-results.xml
+
+      - name: 📊 Test summary
+        if: always()
+        run: |
+          echo "### 🧪 Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner**: ${{ needs.provision.outputs.runner_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Server**: ${{ needs.provision.outputs.public_ip }} (SSH blocked)" >> $GITHUB_STEP_SUMMARY
+          if [ -f test-results.xml ]; then
+            python -c "
+          import xml.etree.ElementTree as ET
+          tree = ET.parse('test-results.xml')
+          ts = tree.getroot()
+          tests  = ts.get('tests', '?')
+          failed = ts.get('failures', '0')
+          errors = ts.get('errors', '0')
+          skipped = ts.get('skipped', '0')
+          print(f'- **Total**: {tests} | **Failed**: {failed} | **Errors**: {errors} | **Skipped**: {skipped}')
+          " >> $GITHUB_STEP_SUMMARY
+          fi
+
+  # ────────────────────────────────────────────────────────────────────────────
   cleanup:
-    name: 🧹 Cleanup Server
-    needs: deploy-and-test
+  # ────────────────────────────────────────────────────────────────────────────
+    name: 🧹 Cleanup
+    needs: [provision, test]
     runs-on: ubuntu-latest
+    # Always run — even if provision or test failed — so we never leak a server
     if: always()
 
     steps:
-      - name: 📥 Checkout code
+      - name: 📥 Checkout
         uses: actions/checkout@v4
 
       - name: 🐍 Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
 
       - name: 📦 Install dependencies
         run: pip install requests
 
-      - name: 🧹 Delete Hetzner Server
+      - name: 📥 Download deployment artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: deployment-info
+        continue-on-error: true   # artifact may not exist if provision failed early
+
+      - name: 🧹 Cleanup server, firewall & runner
         env:
           HETZNER_TOKEN: ${{ secrets.HETZNER_TOKEN }}
+          GITHUB_TOKEN:  ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Read server ID from previous job output
+          # Prefer artifact (most reliable); fall back to job outputs
           if [ -f deployment.json ]; then
-            SERVER_ID=$(python -c "import json; print(json.load(open('deployment.json'))['server_id'])" 2>/dev/null || echo "")
-            if [ ! -z "$SERVER_ID" ]; then
-              echo "Cleaning up server $SERVER_ID..."
-              python hetzner_deploy.py \
-                --action cleanup \
-                --hetzner-token "$HETZNER_TOKEN" \
-                --github-token "${{ secrets.GITHUB_TOKEN }}" \
-                --server-id "$SERVER_ID" || true
-            fi
+            SERVER_ID=$(python -c "import json; print(json.load(open('deployment.json')).get('server_id', 0))")
+            FIREWALL_ID=$(python -c "import json; print(json.load(open('deployment.json')).get('firewall_id', 0))")
+            RUNNER_NAME=$(python -c "import json; print(json.load(open('deployment.json')).get('runner_name', ''))")
+          else
+            SERVER_ID="${{ needs.provision.outputs.server_id }}"
+            FIREWALL_ID="${{ needs.provision.outputs.firewall_id }}"
+            RUNNER_NAME="${{ needs.provision.outputs.runner_name }}"
           fi
 
-      - name: 💰 Cost Summary
+          echo "server_id=$SERVER_ID  firewall_id=$FIREWALL_ID  runner=$RUNNER_NAME"
+
+          python hetzner_deploy.py cleanup \
+            --hetzner-token "$HETZNER_TOKEN" \
+            --github-token  "$GITHUB_TOKEN" \
+            --repo          "${{ github.repository }}" \
+            --server-id     "${SERVER_ID:-0}" \
+            --firewall-id   "${FIREWALL_ID:-0}" \
+            --runner-name   "${RUNNER_NAME:-}"
+
+      - name: 💰 Cost summary
+        if: always()
         run: |
-          echo "### 💰 Infrastructure Summary" >> $GITHUB_STEP_SUMMARY
-          echo "- **Machine Type**: Hetzner cx23" >> $GITHUB_STEP_SUMMARY
-          echo "- **Hourly Cost**: €0.004" >> $GITHUB_STEP_SUMMARY
-          echo "- **Per Test Run**: ~€0.0001-0.0003" >> $GITHUB_STEP_SUMMARY
-          echo "- **Monthly (100 tests)**: ~€0.03" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "✅ **Zero idle cost** - server deleted after tests complete" >> $GITHUB_STEP_SUMMARY
+          echo "### 💰 Infrastructure Cost" >> $GITHUB_STEP_SUMMARY
+          echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Machine | Hetzner cheapest (~€2.99/mo) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Approx cost per run | ~€0.002–0.005 |" >> $GITHUB_STEP_SUMMARY
+          echo "| SSH access | ❌ Blocked by firewall |" >> $GITHUB_STEP_SUMMARY
+          echo "| Idle cost | ✅ €0 — server deleted |" >> $GITHUB_STEP_SUMMARY
