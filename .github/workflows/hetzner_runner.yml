@@ -32,12 +32,6 @@ on:
 #   • Deletes Hetzner server  →  zero idle cost
 #   • Deletes Hetzner firewall
 
-# Global permissions — GITHUB_TOKEN needs administration:write to call
-# POST /repos/{owner}/{repo}/actions/runners/registration-token
-permissions:
-  contents: read
-  administration: write
-
 jobs:
 
   # ────────────────────────────────────────────────────────────────────────────
@@ -70,11 +64,14 @@ jobs:
         id: provision
         env:
           HETZNER_TOKEN: ${{ secrets.HETZNER_TOKEN }}
-          GITHUB_TOKEN:  ${{ secrets.GITHUB_TOKEN }}
+          # GH_PAT must be a classic PAT with 'repo' scope (or a fine-grained
+          # PAT with Administration → Read & Write on this repo).
+          # GITHUB_TOKEN cannot call the runner registration-token endpoint.
+          GH_PAT: ${{ secrets.GH_PAT }}
         run: |
           python hetzner_deploy.py provision \
             --hetzner-token "$HETZNER_TOKEN" \
-            --github-token  "$GITHUB_TOKEN" \
+            --github-token  "$GH_PAT" \
             --repo          "${{ github.repository }}" \
             --run-id        "${{ github.run_id }}"
 
@@ -181,7 +178,7 @@ jobs:
       - name: 🧹 Cleanup server, firewall & runner
         env:
           HETZNER_TOKEN: ${{ secrets.HETZNER_TOKEN }}
-          GITHUB_TOKEN:  ${{ secrets.GITHUB_TOKEN }}
+          GH_PAT:        ${{ secrets.GH_PAT }}
         run: |
           # Prefer artifact (most reliable); fall back to job outputs
           if [ -f deployment.json ]; then
@@ -198,7 +195,7 @@ jobs:
 
           python hetzner_deploy.py cleanup \
             --hetzner-token "$HETZNER_TOKEN" \
-            --github-token  "$GITHUB_TOKEN" \
+            --github-token  "$GH_PAT" \
             --repo          "${{ github.repository }}" \
             --server-id     "${SERVER_ID:-0}" \
             --firewall-id   "${FIREWALL_ID:-0}" \
