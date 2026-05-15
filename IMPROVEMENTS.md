@@ -1,6 +1,6 @@
 # 🤖 Automated Improvements from Claude Analysis
 
-**Generated**: 2026-05-15T10:14:10.372086
+**Generated**: 2026-05-15T13:45:46.999420
 **Repository**: Volodymyr-Dmytriiev/self-repo-task
 **Python Files Analyzed**: 5
 
@@ -13,51 +13,51 @@
   "improvements": [
     {
       "id": 1,
-      "category": "Code Quality",
-      "title": "Enable strict type checking with comprehensive type hints",
-      "what": "Set `disallow_untyped_defs = true` in mypy config and add type hints to all functions in `hetzner_deploy.py` and `self-improve.py`",
-      "why": "The current mypy config has `disallow_untyped_defs = false`, which defeats the purpose of having mypy. Strict typing catches bugs at analysis time, improves IDE autocompletion, and serves as living documentation for function contracts.",
-      "how": "Update pyproject.toml and add type annotations:\n\n```toml\n[tool.mypy]\npython_version = \"3.10\"\nwarn_return_any = true\nwarn_unused_configs = true\ndisallow_untyped_defs = true\nstrict_optional = true\nwarn_redundant_casts = true\nwarn_unused_ignores = true\ncheck_untyped_defs = true\n```\n\nThen annotate functions, e.g.:\n```python\ndef create_firewall(client: HetznerClient, name: str) -> dict[str, Any]:\n    \"\"\"Create a Hetzner firewall with no inbound rules.\"\"\"\n    ...\n```",
+      "category": "Project Structure",
+      "title": "Create a proper Python package directory",
+      "what": "The pyproject.toml references `packages = [\"self_improvement\"]` but there is no `self_improvement/` directory. The main scripts (`self-improve.py`, `hetzner_deploy.py`) are loose in the root. Create a `self_improvement/` package with `__init__.py` and refactor modules into it.",
+      "why": "The current structure has a mismatch between declared package layout and actual files, meaning `pip install -e .` would fail or install nothing. A proper package structure enables importability, testability, and distribution. It also eliminates hyphenated filenames which are not importable in Python.",
+      "how": "```\nmkdir -p self_improvement\nmv self-improve.py self_improvement/improve.py\nmv hetzner_deploy.py self_improvement/hetzner_deploy.py\ntouch self_improvement/__init__.py\n# Add entry points in pyproject.toml:\n[project.scripts]\nself-improve = \"self_improvement.improve:main\"\nhetzner-deploy = \"self_improvement.hetzner_deploy:main\"\n```",
       "estimated_effort": "medium",
-      "files_to_modify": ["pyproject.toml", "hetzner_deploy.py", "self-improve.py"]
+      "files_to_modify": ["self-improve.py", "hetzner_deploy.py", "pyproject.toml", "self_improvement/__init__.py"]
     },
     {
       "id": 2,
-      "category": "Project Structure",
-      "title": "Convert standalone scripts into a proper Python package",
-      "what": "Move `hetzner_deploy.py` and `self-improve.py` into a `self_improvement/` package directory with `__init__.py`, `deploy.py`, `improve.py`, and `cli.py` modules. Add `[project.scripts]` entry points.",
-      "why": "The pyproject.toml references `packages = [\"self_improvement\"]` but no such package directory exists — only top-level scripts. This means `pip install -e .` would install nothing useful. A proper package structure enables imports, reuse, and proper distribution.",
-      "how": "```\nself_improvement/\n    __init__.py          # version, top-level exports\n    deploy.py            # hetzner deployment logic\n    improve.py           # self-improvement logic\n    cli.py               # click/argparse CLI entry points\n    config.py            # centralized configuration\n```\n\nIn pyproject.toml:\n```toml\n[project.scripts]\nself-improve = \"self_improvement.cli:main_improve\"\nhetzner-deploy = \"self_improvement.cli:main_deploy\"\n```",
+      "category": "Code Quality",
+      "title": "Add comprehensive type hints throughout all Python modules",
+      "what": "Add PEP 484/604 type annotations to all function signatures and key variables. The mypy config has `disallow_untyped_defs = false` which should eventually be set to `true`.",
+      "why": "Type hints catch bugs before runtime, improve IDE autocompletion, and serve as machine-verifiable documentation. With mypy already configured in dev dependencies, adding types lets you actually leverage it. Gradual typing lets you start without breaking CI.",
+      "how": "```python\n# Before\ndef create_server(name, server_type, image, ssh_keys, firewall_id, cloud_init):\n    ...\n\n# After\nfrom typing import Any\n\ndef create_server(\n    name: str,\n    server_type: str,\n    image: str,\n    ssh_keys: list[str],\n    firewall_id: int,\n    cloud_init: str,\n) -> dict[str, Any]:\n    ...\n\n# In pyproject.toml, set a path toward strictness:\n[tool.mypy]\ndisallow_untyped_defs = true\nwarn_unreachable = true\nstrict_equality = true\n```",
       "estimated_effort": "medium",
-      "files_to_modify": ["pyproject.toml", "hetzner_deploy.py", "self-improve.py"]
+      "files_to_modify": ["hetzner_deploy.py", "self-improve.py", "pyproject.toml"]
     },
     {
       "id": 3,
       "category": "Best Practices",
-      "title": "Extract secrets and configuration into a dedicated config module with validation",
-      "what": "Create `self_improvement/config.py` using pydantic `BaseSettings` (or a simple dataclass with `os.environ`) to validate all required environment variables at startup.",
-      "why": "Hardcoded or scattered `os.getenv()` calls across scripts make it easy to miss a required variable and get a cryptic error deep in execution. Centralizing config provides fail-fast validation, default documentation, and a single source of truth for all settings.",
-      "how": "```python\n# self_improvement/config.py\nfrom dataclasses import dataclass, field\nimport os\n\n@dataclass(frozen=True)\nclass Config:\n    hetzner_api_token: str = field(default_factory=lambda: _require_env(\"HETZNER_API_TOKEN\"))\n    github_token: str = field(default_factory=lambda: _require_env(\"GITHUB_TOKEN\"))\n    anthropic_api_key: str = field(default_factory=lambda: _require_env(\"ANTHROPIC_API_KEY\"))\n    repo_path: str = field(default_factory=lambda: os.getenv(\"REPO_PATH\", \".\"))\n    vps_type: str = field(default=\"cx11\")\n    log_level: str = field(default=\"INFO\")\n\ndef _require_env(name: str) -> str:\n    val = os.getenv(name)\n    if not val:\n        raise EnvironmentError(f\"Required environment variable '{name}' is not set\")\n    return val\n```",
-      "estimated_effort": "quick",
-      "files_to_modify": ["self-improve.py", "hetzner_deploy.py"]
+      "title": "Replace raw `requests` calls with a session and proper error handling",
+      "what": "Use `requests.Session()` with retry adapters and structured error handling instead of individual `requests.get/post` calls. Add timeout parameters to all network calls.",
+      "why": "Raw requests without timeouts can hang indefinitely, blocking CI runners. A session with retries handles transient network failures gracefully, which is critical for a system that runs autonomously every 2 hours. Connection pooling via sessions also improves performance.",
+      "how": "```python\nimport requests\nfrom requests.adapters import HTTPAdapter\nfrom urllib3.util.retry import Retry\n\ndef create_http_session(\n    retries: int = 3,\n    backoff_factor: float = 0.5,\n    timeout: float = 30.0,\n) -> requests.Session:\n    session = requests.Session()\n    retry_strategy = Retry(\n        total=retries,\n        backoff_factor=backoff_factor,\n        status_forcelist=[429, 500, 502, 503, 504],\n    )\n    adapter = HTTPAdapter(max_retries=retry_strategy)\n    session.mount(\"https://\", adapter)\n    session.mount(\"http://\", adapter)\n    # Store timeout as custom attribute for use in wrapper\n    session.request = functools.partial(session.request, timeout=timeout)  # type: ignore[assignment]\n    return session\n\n# Usage\nsession = create_http_session()\nresponse = session.post(url, headers=headers, json=payload)\nresponse.raise_for_status()\n```",
+      "estimated_effort": "medium",
+      "files_to_modify": ["hetzner_deploy.py", "self-improve.py"]
     },
     {
       "id": 4,
       "category": "Best Practices",
       "title": "Add structured logging instead of print statements",
-      "what": "Replace all `print()` calls with Python's `logging` module using a consistent format that includes timestamps, log levels, and module names.",
-      "why": "Print statements provide no log levels, no filtering, and no structured output. Proper logging allows controlling verbosity via environment variables, makes debugging production issues much easier, and can be routed to files or log aggregation services.",
-      "how": "```python\nimport logging\nimport sys\n\ndef setup_logging(level: str = \"INFO\") -> None:\n    logging.basicConfig(\n        level=getattr(logging, level.upper(), logging.INFO),\n        format=\"%(asctime)s [%(levelname)s] %(name)s: %(message)s\",\n        datefmt=\"%Y-%m-%dT%H:%M:%S\",\n        handlers=[logging.StreamHandler(sys.stdout)],\n    )\n\n# In each module:\nlogger = logging.getLogger(__name__)\n\n# Replace:\n# print(f\"Creating firewall {name}\")\n# With:\nlogger.info(\"Creating firewall %s\", name)\n```",
+      "what": "Replace all `print()` calls with Python's `logging` module using structured formatters. Add log levels (DEBUG, INFO, WARNING, ERROR) appropriately.",
+      "why": "Print statements provide no log levels, no timestamps, and no ability to route output to files or monitoring systems. For an autonomous agent that runs on a schedule, structured logging is essential for debugging failures after the fact. It also enables filtering noisy output in production vs debugging.",
+      "how": "```python\nimport logging\nimport sys\n\ndef setup_logging(level: str = \"INFO\") -> logging.Logger:\n    logger = logging.getLogger(\"self_improvement\")\n    logger.setLevel(getattr(logging, level.upper()))\n    handler = logging.StreamHandler(sys.stdout)\n    formatter = logging.Formatter(\n        \"%(asctime)s [%(levelname)s] %(name)s: %(message)s\",\n        datefmt=\"%Y-%m-%dT%H:%M:%S\",\n    )\n    handler.setFormatter(formatter)\n    logger.addHandler(handler)\n    return logger\n\nlogger = setup_logging()\n\n# Replace: print(f\"Creating server {name}...\")\n# With:\nlogger.info(\"Creating server %s\", name)\n```",
       "estimated_effort": "quick",
       "files_to_modify": ["hetzner_deploy.py", "self-improve.py"]
     },
     {
       "id": 5,
       "category": "Testing",
-      "title": "Add integration-style tests with mocked external APIs and increase coverage",
-      "what": "Add tests that mock the Anthropic API and Hetzner API responses using `unittest.mock.patch` or `responses`/`respx` library. Add a `conftest.py` with shared fixtures. Add coverage enforcement in CI.",
-      "why": "Current tests likely only test trivial paths since both scripts heavily depend on external APIs. Without mocking, tests either skip real logic or require live credentials. Coverage enforcement prevents regressions and forces new code to include tests.",
-      "how": "```python\n# tests/conftest.py\nimport pytest\nfrom unittest.mock import MagicMock, patch\n\n@pytest.fixture\ndef mock_anthropic_client():\n    with patch(\"self_improvement.improve.anthropic.Anthropic\") as mock:\n        client = MagicMock()\n        mock.return_value = client\n        client.messages.create.return_value.content = [\n            MagicMock(text='{\"improvements\": []}')\n        ]\n        yield client\n\n@pytest.fixture\ndef mock_hetzner_api():\n    with patch(\"self_improvement.deploy.requests.post\") as mock_post, \\\n         patch(\"self_improvement.deploy.requests.get\") as mock_get:\n        mock_post.return_value.status_code = 201\n        mock_post.return_value.json.return_value = {\"server\": {\"id\": 123}}\n        yield {\"post\": mock_post, \"get\": mock_get}\n```\n\nIn pyproject.
+      "title": "Add integration-style tests with mocked HTTP responses",
+      "what": "Use `responses` or `pytest-httpserver` library to mock Hetzner API and Anthropic API calls. Add tests for the full workflow paths (server creation, self-improvement analysis).",
+      "why": "Current tests likely only cover unit-level logic (if that). The main value of this codebase is API orchestration, so testing the HTTP interaction paths with mocked responses catches serialization bugs, error handling gaps, and workflow regressions. This is where real bugs hide.",
+      "how": "```python\n# tests/test_hetzner_deploy.py\nimport responses\nimport pytest\nfrom self_improvement.hetzner_deploy import create_server\n\n@responses.activate\ndef test_create_server_success():\n    responses.add(\n        responses.POST,\n        \"https://api.hetzner.cloud/v1/servers\",\n        json={\n            \"server\": {\"id\": 12345, \"name\": \"test-runner\", \"status\": \"running\"},\n            \"action\": {\"id\": 1, \"status\": \"running\"},\n        },\n        status=201,\n    )\n    result = create_server(\n        name=\"test-runner\",\n        server_type=\"cx11\",\n        image=\"ubuntu-22.04\",\n        ssh_keys=[],\n        firewall_id=1,\
 
 ---
 *Auto-generated by Self-Improvement Agent - Runs every 2 hours*
