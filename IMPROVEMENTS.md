@@ -1,6 +1,6 @@
 # 🤖 Automated Improvements from Claude Analysis
 
-**Generated**: 2026-05-17T22:44:59.242599
+**Generated**: 2026-05-18T02:33:44.550969
 **Repository**: Volodymyr-Dmytriiev/self-repo-task
 **Python Files Analyzed**: 5
 
@@ -15,47 +15,40 @@
       "id": 1,
       "category": "Project Structure",
       "title": "Create a proper Python package directory instead of loose scripts",
-      "what": "Move `self-improve.py` and `hetzner_deploy.py` into a `self_improvement/` package directory with proper `__init__.py`, and rename them to valid Python module names (hyphens are invalid in module names).",
-      "why": "The `pyproject.toml` references `packages = [\"self_improvement\"]` but no such directory exists. The file `self-improve.py` uses a hyphen which makes it unimportable as a module. A proper package structure enables reuse, testability, and aligns with the declared build configuration.",
-      "how": "```\nmkdir -p self_improvement\nmv self-improve.py self_improvement/improve.py\nmv hetzner_deploy.py self_improvement/hetzner_deploy.py\ntouch self_improvement/__init__.py\n# Add entry points in pyproject.toml:\n[project.scripts]\nself-improve = \"self_improvement.improve:main\"\nhetzner-deploy = \"self_improvement.hetzner_deploy:main\"\n```",
-      "estimated_effort": "medium",
-      "files_to_modify": ["self-improve.py", "hetzner_deploy.py", "pyproject.toml", "self_improvement/__init__.py"]
+      "what": "Move `self-improve.py` and `hetzner_deploy.py` into a `self_improvement/` package with `__init__.py`, `cli.py`, `analyzer.py`, `deployer.py` modules. The `pyproject.toml` already references `[tool.setuptools] packages = [\"self_improvement\"]` but this directory doesn't exist.",
+      "why": "The project declares a `self_improvement` package in pyproject.toml but ships code as top-level scripts. This breaks `pip install -e .` and prevents proper import resolution. A proper package structure enables reusability, testability, and standard Python distribution.",
+      "how": "```\nmkdir -p self_improvement\n# Move logic into modules:\n# self_improvement/__init__.py  (version, public API)\n# self_improvement/analyzer.py  (repo analysis logic from self-improve.py)\n# self_improvement/deployer.py  (Hetzner logic from hetzner_deploy.py)\n# self_improvement/cli.py       (argparse entry points)\n\n# In pyproject.toml add console_scripts:\n# [project.scripts]\n# self-improve = \"self_improvement.cli:main_improve\"\n# hetzner-deploy = \"self_improvement.cli:main_deploy\"\n```",
+      "files_to_modify": ["self-improve.py", "hetzner_deploy.py", "pyproject.toml"],
+      "files_to_create": ["self_improvement/__init__.py", "self_improvement/analyzer.py", "self_improvement/deployer.py", "self_improvement/cli.py"],
+      "estimated_effort": "medium"
     },
     {
       "id": 2,
       "category": "Code Quality",
-      "title": "Add comprehensive type hints throughout all Python modules",
-      "what": "Add type annotations to all function signatures and key variables in `self-improve.py` and `hetzner_deploy.py`. Enable `disallow_untyped_defs = true` in mypy config.",
-      "why": "The mypy config currently has `disallow_untyped_defs = false`, meaning type checking is effectively toothless. Type hints catch bugs at development time, improve IDE support, and serve as living documentation for function contracts.",
-      "how": "```python\n# Before\ndef analyze_repository(repo_path, config):\n    results = []\n    ...\n\n# After\nfrom pathlib import Path\nfrom typing import Any\n\ndef analyze_repository(repo_path: Path, config: dict[str, Any]) -> list[dict[str, str]]:\n    results: list[dict[str, str]] = []\n    ...\n\n# In pyproject.toml, update:\n[tool.mypy]\npython_version = \"3.10\"\nwarn_return_any = true\nwarn_unused_configs = true\ndisallow_untyped_defs = true\nstrict_optional = true\n```",
-      "estimated_effort": "medium",
-      "files_to_modify": ["self-improve.py", "hetzner_deploy.py", "pyproject.toml"]
+      "title": "Add comprehensive type hints throughout all Python files",
+      "what": "Add full type annotations to all function signatures and key variables. The mypy config has `disallow_untyped_defs = false` which should eventually be set to `true`.",
+      "why": "Type hints dramatically improve IDE support, catch bugs at static analysis time, and serve as living documentation. With mypy already configured in dev dependencies, the project should actually leverage it. Setting `disallow_untyped_defs = true` enforces this going forward.",
+      "how": "```python\n# Before:\ndef analyze_repository(repo_path, config=None):\n    results = []\n    ...\n\n# After:\nfrom pathlib import Path\nfrom typing import Any\n\ndef analyze_repository(\n    repo_path: Path | str,\n    config: dict[str, Any] | None = None,\n) -> list[dict[str, str]]:\n    results: list[dict[str, str]] = []\n    ...\n\n# In pyproject.toml:\n# [tool.mypy]\n# disallow_untyped_defs = true\n# strict = true\n```",
+      "files_to_modify": ["self-improve.py", "hetzner_deploy.py", "pyproject.toml"],
+      "estimated_effort": "medium"
     },
     {
       "id": 3,
-      "category": "Best Practices",
-      "title": "Add secret scanning and never log/expose API tokens",
-      "what": "Audit `hetzner_deploy.py` for any places where API tokens or GitHub tokens might be logged, printed, or included in error messages. Add a secrets filter and use `logging` with a redaction filter instead of `print` statements.",
-      "why": "The script handles Hetzner API tokens and GitHub runner registration tokens. If these are accidentally logged in CI output, they become exposed in GitHub Actions logs which are often publicly readable. A redaction filter prevents accidental credential leaks.",
-      "how": "```python\nimport logging\nimport re\n\nclass SecretFilter(logging.Filter):\n    \"\"\"Redact sensitive tokens from log output.\"\"\"\n    SECRET_PATTERN = re.compile(r'(AAAA[A-Za-z0-9_-]{20,}|gh[ps]_[A-Za-z0-9]{36,})')\n\n    def filter(self, record: logging.LogRecord) -> bool:\n        record.msg = self.SECRET_PATTERN.sub('***REDACTED***', str(record.msg))\n        if record.args:\n            record.args = tuple(\n                self.SECRET_PATTERN.sub('***REDACTED***', str(a)) if isinstance(a, str) else a\n                for a in record.args\n            )\n        return True\n\nlogger = logging.getLogger(__name__)\nlogger.addFilter(SecretFilter())\n```",
-      "estimated_effort": "medium",
-      "files_to_modify": ["hetzner_deploy.py"]
+      "category": "Security",
+      "title": "Add secrets validation and avoid hardcoded/logged sensitive data",
+      "what": "Ensure all API keys (Anthropic, Hetzner, GitHub tokens) are loaded from environment variables with explicit validation at startup, and that no secret values are ever logged or included in error messages.",
+      "why": "The hetzner_deploy.py script handles cloud API tokens and GitHub runner tokens. If these are logged accidentally (e.g., in tracebacks or debug output), credentials leak into CI logs which are often publicly accessible. Explicit validation prevents cryptic downstream errors.",
+      "how": "```python\nimport os\nimport sys\n\ndef get_required_env(name: str) -> str:\n    \"\"\"Get a required environment variable or exit with a clear error.\"\"\"\n    value = os.environ.get(name)\n    if not value:\n        print(f\"ERROR: Required environment variable '{name}' is not set.\", file=sys.stderr)\n        sys.exit(1)\n    return value\n\n# Usage:\nhetzner_token = get_required_env(\"HETZNER_API_TOKEN\")\n# NEVER do: logger.info(f\"Using token: {hetzner_token}\")\n# Instead:  logger.info(f\"HETZNER_API_TOKEN is set ({len(hetzner_token)} chars)\")\n\n# Add to logging config:\nimport logging\nclass SecretFilter(logging.Filter):\n    def __init__(self, secrets: list[str]):\n        super().__init__()\n        self.secrets = secrets\n    def filter(self, record: logging.LogRecord) -> bool:\n        msg = record.getMessage()\n        for secret in self.secrets:\n            if secret and secret in msg:\n                record.msg = record.msg.replace(secret, \"***REDACTED***\")\n        return True\n```",
+      "files_to_modify": ["hetzner_deploy.py", "self-improve.py"],
+      "estimated_effort": "quick"
     },
     {
       "id": 4,
       "category": "Testing",
-      "title": "Add integration-style tests with proper mocking for API calls",
-      "what": "Expand `tests/test_hetzner_deploy.py` and `tests/test_self_improve.py` with comprehensive unit tests that mock external API calls (Hetzner API, Anthropic API, GitHub API) and test error handling paths.",
-      "why": "Current test files likely have minimal coverage. Both scripts make HTTP requests to external services — without mocked tests, you can't verify error handling, retry logic, or edge cases without actual API credentials. Mocked tests run in CI without secrets.",
-      "how": "```python\n# tests/test_hetzner_deploy.py\nimport pytest\nfrom unittest.mock import patch, MagicMock\n\n@pytest.fixture\ndef mock_hetzner_api():\n    with patch('requests.Session') as mock_session:\n        mock_resp = MagicMock()\n        mock_resp.status_code = 201\n        mock_resp.json.return_value = {\n            'server': {'id': 12345, 'public_net': {'ipv4': {'ip': '1.2.3.4'}}}\n        }\n        mock_session.return_value.post.return_value = mock_resp\n        yield mock_session\n\ndef test_create_server_success(mock_hetzner_api):\n    from self_improvement.hetzner_deploy import create_server\n    result = create_server(token='fake-token', name='test-runner')\n    assert result['id'] == 12345\n\ndef test_create_server_rate_limited(mock_hetzner_api):\n    mock_resp = MagicMock()\n    mock_resp.status_code = 429\n    mock_resp.headers = {'Retry-After': '1'}\n    mock_hetzner_api.return_value.post.return_value = mock_resp\n    from self_improvement.hetzner_deploy import create_server\n    with pytest.raises(Exception, match='rate limit'):\n        create_server(token='fake-token', name='test-runner')\n\n# tests/test_self_improve.py\n@patch('anthropic.Anthropic')\ndef test_analyze_repository_produces_improvements(mock_anthropic, tmp_path):\n    mock_client = mock_anthropic.return_value\n    mock_client.messages.create.return_value.content = [\n        MagicMock(text='{\"improvements\": [\"add docstrings\"]}')\n    ]\n    from self_improvement.improve import analyze_repository\n    results = analyze_repository(tmp_path, {})\n    assert len(results) > 0\n```",
-      "estimated_effort": "complex",
-      "files_to_modify": ["tests/test_hetzner_deploy.py", "tests/test_self_improve.py"]
-    },
-    {
-      "id": 5,
-      "category": "Documentation",
-      "title": "Add architecture documentation and sequence diagrams",
-      "what": "Create a `docs/` directory with `ARCHITECTURE.md` explaining the system flow: how the cron trigger fires, what `self-improve.py` does step by step, how Hetzner deployment works, and how PRs are created. Include a M
+      "title": "Expand test coverage with fixtures, mocking, and edge cases",
+      "what": "Add pytest fixtures for common test data, mock external API calls (Anthropic, Hetzner, GitHub), add edge case tests (empty repos, network failures, malformed responses), and add a `conftest.py` with shared fixtures.",
+      "why": "Current tests likely only cover happy paths. For a system that autonomously modifies a repository and manages cloud infrastructure, robust testing of failure modes is critical. Mocking external services makes tests fast, deterministic, and runnable without API keys.",
+      "how": "```python\n# tests/conftest.py\nimport pytest\nfrom pathlib import Path\nfrom unittest.mock import MagicMock, patch\n\n@pytest.fixture\ndef sample_repo(tmp_path: Path) -> Path:\n    \"\"\"Create a minimal repository structure for testing.\"\"\"\n    (tmp_path / \"README.md\").write_text(\"# Test Repo\")\n    (tmp_path / \"main.py\").write_text(\"def hello(): pass\")\n    (tmp_path / \"pyproject.toml\").write_text('[project]\\nname = \"test\"')\n    return tmp_path\n\n@pytest.fixture\ndef mock_anthropic():\n    with patch(\"anthropic.Anthropic\") as mock_cls:\n        client = MagicMock()\n        mock_cls.return_value = client\n        client.messages.create.return_value = MagicMock(\n            content=[MagicMock(text='{\"improvements\": []}')]\n        )\n        yield client\n\n@pytest.fixture\ndef mock_hetzner_api():\n    with patch(\"requests.Session\") as mock_session:\n        session = MagicMock()\n        mock_session.return_value = session\n        yield session\n\n# tests/test_self_improve.py - add edge cases:\ndef test_analyze_empty_repository(sample_repo: Path):\n    \"\"\"Analyzer should handle repos with no Python files gracefully.\"\"\"\n    for f in sample_repo.glob(\"*.py\"):\n        f.unlink()\n    # Should return empty improvements, not crash\n    result = analyze_repository(sample_repo)\n    assert result is not None\n    assert isinstance(result, list)\n\ndef test_api_failure_handling(mock_anthropic):\n    \"\"\"Should handle API errors gracefully.\"\"\"\n    mock_anthropic.messages.create.side_effect = Exception(\"Rate limited\")\n    with pytest.
 
 ---
 *Auto-generated by Self-Improvement Agent - Runs every 2 hours*
