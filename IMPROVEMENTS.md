@@ -1,6 +1,6 @@
 # 🤖 Automated Improvements from Claude Analysis
 
-**Generated**: 2026-05-20T07:36:43.009701
+**Generated**: 2026-05-20T10:43:10.320846
 **Repository**: Volodymyr-Dmytriiev/self-repo-task
 **Python Files Analyzed**: 5
 
@@ -14,40 +14,48 @@
     {
       "id": 1,
       "category": "Code Quality",
-      "title": "Enforce strict type hints across all Python files",
-      "what": "Enable `disallow_untyped_defs = true` in mypy config and add comprehensive type hints to `hetzner_deploy.py` and `self-improve.py`",
-      "why": "The current mypy config has `disallow_untyped_defs = false`, which defeats much of mypy's value. Strict type hints catch bugs at development time, improve IDE autocompletion, and serve as living documentation for function signatures.",
-      "how": "Update `pyproject.toml` mypy section and annotate all functions:\n```toml\n[tool.mypy]\npython_version = \"3.10\"\nwarn_return_any = true\nwarn_unused_configs = true\ndisallow_untyped_defs = true\nstrict_optional = true\nwarn_redundant_casts = true\nwarn_unused_ignores = true\ncheck_untyped_defs = true\n```\n\nThen annotate functions, e.g.:\n```python\ndef create_firewall(client: hcloud.Client, name: str) -> hcloud.firewalls.domain.Firewall:\n    \"\"\"Create a Hetzner firewall with no inbound rules.\"\"\"\n    ...\n```",
+      "title": "Enable strict type checking with comprehensive type hints",
+      "what": "Set `disallow_untyped_defs = true` in mypy config and add type hints to all functions in hetzner_deploy.py and self-improve.py",
+      "why": "The current mypy config has `disallow_untyped_defs = false`, which defeats the purpose of static type checking. Enforcing type hints catches bugs at development time, improves IDE support, and serves as living documentation for function signatures.",
+      "how": "Update pyproject.toml and add type annotations to all functions:\n\n```toml\n[tool.mypy]\npython_version = \"3.10\"\nwarn_return_any = true\nwarn_unused_configs = true\ndisallow_untyped_defs = true\nstrict_optional = true\nwarn_redundant_casts = true\nwarn_unused_ignores = true\ncheck_untyped_defs = true\n```\n\nExample for functions:\n```python\nfrom typing import Any\n\ndef create_firewall(client: dict[str, Any], name: str) -> dict[str, Any]:\n    \"\"\"Create a Hetzner firewall with no inbound rules.\"\"\"\n    ...\n\ndef analyze_repository(repo_path: str | Path) -> dict[str, list[str]]:\n    \"\"\"Analyze repository structure and return improvement suggestions.\"\"\"\n    ...\n```",
       "estimated_effort": "medium",
       "files_to_modify": ["pyproject.toml", "hetzner_deploy.py", "self-improve.py"]
     },
     {
       "id": 2,
       "category": "Project Structure",
-      "title": "Convert scripts into a proper Python package with CLI entry points",
-      "what": "Move `hetzner_deploy.py` and `self-improve.py` into a `self_improvement/` package with `__init__.py`, `deploy.py`, `improve.py`, and a `cli.py` module. Define console_scripts entry points in `pyproject.toml`.",
-      "why": "Top-level scripts are not importable as modules, making testing harder and preventing code reuse. A proper package structure enables `python -m self_improvement`, proper imports in tests, and installable CLI commands. The `pyproject.toml` already references `[tool.setuptools] packages = [\"self_improvement\"]` but the directory doesn't exist.",
-      "how": "```\nself_improvement/\n    __init__.py          # Package version and metadata\n    deploy.py            # Hetzner deployment logic (from hetzner_deploy.py)\n    improve.py           # Self-improvement logic (from self-improve.py)\n    cli.py               # Click/argparse entry points\n    config.py            # Centralized configuration handling\n```\n\n```toml\n[project.scripts]\nself-improve = \"self_improvement.cli:improve_main\"\nhetzner-deploy = \"self_improvement.cli:deploy_main\"\n```\n\nKeep the old scripts as thin wrappers during migration:\n```python\n#!/usr/bin/env python3\n\"\"\"Legacy wrapper — delegates to self_improvement package.\"\"\"\nfrom self_improvement.cli import deploy_main\nif __name__ == \"__main__\":\n    deploy_main()\n```",
+      "title": "Move source files into a proper Python package directory",
+      "what": "Move hetzner_deploy.py and self-improve.py into a `self_improvement/` package directory with proper __init__.py, and rename self-improve.py to remove the hyphen",
+      "why": "The pyproject.toml declares `packages = [\"self_improvement\"]` but source files sit at the repository root, so the package is broken. Python module names cannot contain hyphens, so `self-improve.py` cannot be imported. A proper package structure enables importability, testability, and distribution.",
+      "how": "```bash\nmkdir -p self_improvement\nmv hetzner_deploy.py self_improvement/hetzner_deploy.py\nmv self-improve.py self_improvement/self_improve.py\n```\n\nCreate `self_improvement/__init__.py`:\n```python\n\"\"\"Autonomous repository self-improvement agent using Claude AI.\"\"\"\n\n__version__ = \"1.0.0\"\n```\n\nCreate `self_improvement/__main__.py`:\n```python\n\"\"\"Entry point for running as `python -m self_improvement`.\"\"\"\nfrom self_improvement.self_improve import main\n\nif __name__ == \"__main__\":\n    main()\n```\n\nAdd console entry points in pyproject.toml:\n```toml\n[project.scripts]\nself-improve = \"self_improvement.self_improve:main\"\nhetzner-deploy = \"self_improvement.hetzner_deploy:main\"\n```\n\nUpdate test imports accordingly.",
       "estimated_effort": "medium",
-      "files_to_modify": ["hetzner_deploy.py", "self-improve.py", "pyproject.toml", "self_improvement/__init__.py", "self_improvement/deploy.py", "self_improvement/improve.py", "self_improvement/cli.py", "self_improvement/config.py"]
+      "files_to_modify": [
+        "self_improvement/__init__.py",
+        "self_improvement/__main__.py",
+        "self_improvement/hetzner_deploy.py",
+        "self_improvement/self_improve.py",
+        "pyproject.toml",
+        "tests/test_hetzner_deploy.py",
+        "tests/test_self_improve.py"
+      ]
     },
     {
       "id": 3,
       "category": "Best Practices",
-      "title": "Centralize configuration and eliminate hardcoded secrets/values",
-      "what": "Create a `self_improvement/config.py` using pydantic-settings or dataclasses to load all configuration from environment variables with validation, defaults, and documentation.",
-      "why": "Deployment scripts typically embed API tokens, server types, and region names as strings scattered through the code. Centralizing config prevents misconfiguration, makes secrets handling explicit, and enables different environments (dev/staging/prod) without code changes.",
-      "how": "```python\n# self_improvement/config.py\nfrom __future__ import annotations\nimport os\nfrom dataclasses import dataclass, field\n\n\n@dataclass(frozen=True)\nclass HetznerConfig:\n    api_token: str = field(default_factory=lambda: os.environ[\"HETZNER_API_TOKEN\"])\n    server_type: str = \"cx11\"\n    image: str = \"ubuntu-22.04\"\n    location: str = \"fsn1\"\n    firewall_name: str = \"gh-runner-fw\"\n    ssh_key_name: str | None = None\n\n    def __post_init__(self) -> None:\n        if not self.api_token:\n            raise ValueError(\"HETZNER_API_TOKEN must be set and non-empty\")\n\n\n@dataclass(frozen=True)\nclass AnthropicConfig:\n    api_key: str = field(default_factory=lambda: os.environ[\"ANTHROPIC_API_KEY\"])\n    model: str = \"claude-sonnet-4-20250514\"\n    max_tokens: int = 4096\n```",
+      "title": "Add structured logging instead of print statements",
+      "what": "Replace all print() calls with Python's logging module using structured log levels (DEBUG, INFO, WARNING, ERROR)",
+      "why": "Print statements provide no log level differentiation, cannot be filtered, and are lost in production. Structured logging enables log aggregation, filtering by severity, and proper debugging in CI/CD environments where the self-improvement agent runs autonomously every 2 hours.",
+      "how": "```python\nimport logging\nimport sys\n\ndef setup_logging(level: str = \"INFO\") -> logging.Logger:\n    \"\"\"Configure structured logging for the application.\"\"\"\n    logger = logging.getLogger(\"self_improvement\")\n    logger.setLevel(getattr(logging, level.upper(), logging.INFO))\n    \n    handler = logging.StreamHandler(sys.stdout)\n    handler.setFormatter(\n        logging.Formatter(\n            \"%(asctime)s [%(levelname)s] %(name)s: %(message)s\",\n            datefmt=\"%Y-%m-%dT%H:%M:%S\"\n        )\n    )\n    logger.addHandler(handler)\n    return logger\n\n# Usage:\nlogger = setup_logging()\nlogger.info(\"Analyzing repository at %s\", repo_path)\nlogger.error(\"Failed to create VPS: %s\", error)\nlogger.debug(\"API response: %s\", response.json())\n```",
       "estimated_effort": "medium",
-      "files_to_modify": ["self_improvement/config.py", "hetzner_deploy.py", "self-improve.py"]
+      "files_to_modify": ["hetzner_deploy.py", "self-improve.py"]
     },
     {
       "id": 4,
-      "category": "Testing",
-      "title": "Add integration test fixtures and increase coverage to >80%",
-      "what": "Add pytest fixtures for mocking Hetzner API and Anthropic API responses, add parameterized tests for edge cases, and configure coverage thresholds in `pyproject.toml`.",
-      "why": "The test directory exists but likely has minimal coverage of error paths, API failure modes, and configuration edge cases. Mocked API fixtures prevent flaky tests and enable CI to run without real credentials. A coverage threshold prevents regression.",
-      "how": "```toml\n# pyproject.toml\n[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\naddopts = \"--cov=self_improvement --cov-report=term-missing --cov-fail-under=80\"\nmarkers = [\n    \"integration: marks tests that need real API access\",\n]\n```\n\n```python\n# tests/conftest.py\nimport pytest\nfrom unittest.mock import MagicMock, patch\n\n\n@pytest.fixture\ndef mock_hetzner_client():\n    \"\"\"Provide a fully mocked Hetzner client.\"\"\"\n    with patch(\"hcloud.Client\") as mock_cls:\n        client = MagicMock()\n        mock_cls.return_value = client\n        # Pre-configure common responses\n        client.servers.create.return_value.server.id = 12345\n        client.servers.create.return_value.server.public_net.ipv4.ip = \"1.2.3.4\"\n        yield client\n\n\n@pytest.fixture\ndef mock_anthropic_client():\n    \"\"\"Provide a mocked Anthropic client with realistic responses.\"\"\"\n    with patch(\"anthropic.Anthropic\") as mock_cls:\n        client = MagicMock()\n        mock_cls.return_value = client\n        response = MagicMock()\n        response.content = [MagicMock(text='{\"improvements\": []}')]\n        client.messages.create.return_value = response\n        yield client\n\n\n# tests/test_hetzner_deploy.py\nimport pytest\n\ndef test_create_server_success(mock_hetzner
+      "category": "Best Practices",
+      "title": "Extract secrets handling and add environment variable validation",
+      "what": "Create a configuration module that validates all required environment variables at startup with clear error messages, and ensure no secrets can leak into logs",
+      "why": "The hetzner_deploy.py script uses API tokens and GitHub tokens that must be available as environment variables. Failing fast with descriptive errors prevents confusing downstream failures. Redacting secrets from log output prevents accidental credential exposure in CI logs.",
+      "how": "Create `self_improvement/config.py`:\n```python\nfrom __future__ import annotations\n\nimport os\nfrom dataclasses import dataclass\n\n\nclass ConfigError(Exception):\n    \"\"\"Raised when required configuration is missing.\"\"\"\n\n\n@dataclass(frozen=True)\nclass HetznerConfig:\n    api_token: str\n    github_token: str\n    github_repo: str\n    runner_labels: str = \"self-hosted\"\n    server_type: str = \"cx11\"\n    image: str = \"ubuntu-22.04\"\n    location: str = \"fsn1\"\n\n    @classmethod\n    def from_env(cls) -> HetznerConfig:\n        \"\"\"Load configuration from environment variables.\"\"\"\n        required = {\n            \"HETZNER_API_TOKEN\": \"Hetzner Cloud API token\",\n            \"GH_TOKEN\": \"GitHub personal access token\",\n            \"GITHUB_REPOSITORY\": \"GitHub repository (owner/repo)\",\n        }\n        missing = [\n            f\"  - {key}: {desc}\"\n            for key, desc in required.items()\n            if not os.environ.get(key)\n        ]\n        if missing:\n            raise ConfigError(\n                \"Missing required environment variables:\\n\"\n                + \"\\n\".join(missing)\n            )\n        return cls(\n            api_token=os.environ[\"HETZNER_API_TOKEN\"],\n            github_token=os.environ[\"GH_TOKEN\"],\n            github_repo=os.environ[\"GITHUB_REPOSITORY\"],\n            runner_labels=os.environ.get(\"RUNNER_LABELS\", \"self-hosted\"),\n            server_type=os.environ.get(\"HETZNER
 
 ---
 *Auto-generated by Self-Improvement Agent - Runs every 2 hours*
